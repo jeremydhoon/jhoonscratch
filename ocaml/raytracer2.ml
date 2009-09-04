@@ -179,17 +179,17 @@ class sphere pos clr reflectivity (radius : float) =
         let dist = cdotd -. sqrtdisc in
         if dist < 0.0 then None
         else (
-          Printf.printf "Intersected at distance %f\n" dist;
+          (*Printf.printf "Intersected at distance %f\n" dist;*)
           let isectpos = (dir#scale dist)#sum src in
           (*let norm = ((dir#scale dist)#difference orig)#norm in*)
           (*let norm = (new vector3 0.5 0.5 0.5)#norm#inverse in*)
-          let norm = (isectpos#difference pos)#norm in
-          print_endline norm#tostring;
+          let norm = (isectpos#difference pos)#norm#inverse in
+          (*print_endline norm#tostring;
           print_endline (string_of_float ((isectpos#difference pos)#magnitude));
           print_endline (string_of_float dist);
           print_endline isectpos#tostring;
           print_endline dir#tostring;
-          print_endline pos#tostring;
+          print_endline pos#tostring;*)
           Some (new intersection (isectpos#sum (norm#scale (-.0.01))) norm clr (abs_float dist) reflectivity)))
   end
 ;;
@@ -216,7 +216,7 @@ class plane pos clr reflectivity normvector =
     method private offset = normvector#scale 0.01
     method intersect src dir =
       let perp_component = normvector#dot dir in
-      if (abs_float perp_component) < 0.0001 then (print_endline "no intersection with plan"; None)
+      if (abs_float perp_component) < 0.0001 then (None)
       else (
         let numerator = _d -. (normvector#dot src) in
         let dist = numerator /. perp_component in
@@ -227,7 +227,7 @@ class plane pos clr reflectivity normvector =
   end
 ;;
 
-let test_plane = new plane (new vector3 15.0 0.0 0.0) (new color 1.0 0.0 0.0) 0.2 (new vector3 1.0 0.0 0.0);;        
+let test_plane = new plane (new vector3 13.0 0.0 0.0) (new color 1.0 0.0 0.0) 0.2 (new vector3 1.0 0.0 0.0);;        
 
 type ray_t = {src : vector3; dir : vector3; x : int; y : int; isect : intersection option};;
 
@@ -279,29 +279,29 @@ class light (pos : vector3) (brightness : float) =
   end
 ;;
 
-let test_light = new light (new vector3 ( -.50.0) 0.0 0.0) 0.99;;
+let test_light = new light (new vector3 ( -.3.0) 2.0 0.0) 0.99;;
 
-class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : color) (depth : int) =
+class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : color) (depth : int) (ambient : float) =
   object (self)
     method rays_to_color rays =
       let rec make_color rem_rays =
         match rem_rays with
         | (ray :: []) -> (
           match ray.isect with
-          | None -> bgclr
+          | None -> bgclr#scale (self#check_lights ray.src ray.dir#norm)
           | Some isect -> (isect#color#scale (self#check_lights isect#pos isect#norm)))
         | (ray :: (tail : ray_t list)) -> (
             match ray.isect with
             | Some isect -> (isect#color#mix (make_color tail) (1.0 -. isect#reflectivity))
             | None -> raise (invalid_arg "Got None for intersection before last ray") 
           )
-        | _ -> raise (invalid_arg "make_color")
+        | _ -> raise (invalid_arg "make_color: Empty list of rays provided.")
       in
       make_color rays
     method check_lights src normvector =
       let rec check_rec rem_lights brightness =
         match rem_lights with
-        | [] -> brightness
+        | [] -> min 1.0 (brightness +. ambient)
         | ((l : light) :: rest) -> (
             let dir = (l#pos#difference src)#norm in
             (*let dir = (src#difference l#pos)#norm in*)
@@ -309,13 +309,12 @@ class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : 
             let rec check_shapes = function
               | [] -> (                
                 let scale_factor = max ((dir#dot normvector#inverse)) 0.0 in
-                (*Printf.printf "Scale: %f\tdir: %s\tsrc: %s\tnorm: %s\n" scale_factor dir#tostring src#tostring normvector#tostring;*)
-                min 1.0 (check_rec rest (brightness +. (l#brightness *. scale_factor))))
+                check_rec rest (brightness +. (l#brightness *. scale_factor)))
               | ((s : shape) :: shape_rest) -> (
                 match s#intersect src dir with
                 | None -> check_shapes shape_rest
-                | Some isect when light_dist < isect#distance -> (print_endline "less distance";check_shapes shape_rest)
-                | Some isect -> (Printf.printf "light dist: %f\tisect dist: %f\n" light_dist isect#distance ;check_rec rest brightness))
+                | Some isect when light_dist < isect#distance -> (check_shapes shape_rest)
+                | Some isect -> (check_rec rest brightness))
             in
             check_shapes shapes)
       in
@@ -358,8 +357,18 @@ class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : 
   end
 
 
-let test_scene = new scene test_cam [test_plane; test_sphere] [test_light] (new color 0.0 1.0 0.0) 1;;
-test_scene#render_to_bmp 256 192 "raytracer2_test.bmp";;
+let light_2 = new light (new vector3 0.0 2.0 3.0) 0.99;;
+let clr_green = new color 0.0 1.0 0.5;;
+let clr_purple = new color 1.0 0.0 1.0;;
+let small_sphere = new sphere (new vector3 1.0 0.5 (-. 3.5)) clr_purple 1.0 0.15;;
+let bottom_plane = new plane (new vector3 0.0 (-. 4.0) 0.0) clr_green 0.5 (new vector3 0.0 (-. 1.0) 0.0);;
+let left_plane = new plane (new vector3 0.0 0.0 (-. 6.0)) clr_green 0.5 (new vector3 0.0 0.0 (-. 1.0));;
+let right_plane = new plane (new vector3 0.0 0.0 6.0) clr_green 0.5 (new vector3 0.0 0.0 1.0);;
+let top_plane = new plane (new vector3 0.0 4.0 0.0) clr_green 0.5 (new vector3 0.0 1.0 0.0);;
+
+let test_scene = new scene test_cam [top_plane; test_sphere; small_sphere; bottom_plane; left_plane; right_plane]
+    [test_light] (new color 0.0 1.0 0.0) 1 0.25;;
+test_scene#render_to_bmp 1024 640 "raytracer2_test.bmp";;
   
 (*
 vector_tests test_v3_a test_v3_b;;
