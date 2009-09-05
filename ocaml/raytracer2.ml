@@ -183,7 +183,7 @@ class sphere pos clr reflectivity (radius : float) =
           let isectpos = (dir#scale dist)#sum src in
           (*let norm = ((dir#scale dist)#difference orig)#norm in*)
           (*let norm = (new vector3 0.5 0.5 0.5)#norm#inverse in*)
-          let norm = (isectpos#difference pos)#norm#inverse in
+          let norm = (isectpos#difference pos)#norm in
           (*print_endline norm#tostring;
           print_endline (string_of_float ((isectpos#difference pos)#magnitude));
           print_endline (string_of_float dist);
@@ -197,7 +197,7 @@ class sphere pos clr reflectivity (radius : float) =
 let test_sphere_origin = new vector3 1.0 0.0 0.0;;
 let test_sphere_color = new color 0.5 0.3 0.9;;
 let test_sphere_radius = 2.23;;
-let test_sphere_reflectivity = 0.0;;
+let test_sphere_reflectivity = 1.0;;
 let test_sphere = new sphere test_sphere_origin test_sphere_color test_sphere_reflectivity test_sphere_radius;;
 let test_sphere_src = new vector3 (-.5.0) (-.5.0) (-.5.0);;
 let test_sphere_dir = (new vector3 1.0 1.0 1.0)#norm;;
@@ -284,34 +284,43 @@ let test_light = new light (new vector3 ( -.3.0) 2.0 0.0) 0.99;;
 class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : color) (depth : int) (ambient : float) =
   object (self)
     method rays_to_color rays =
-      let rec make_color rem_rays =
+      let rec make_color rem_rays prev_refl =
         match rem_rays with
         | (ray :: []) -> (
           match ray.isect with
           | None -> bgclr#scale (self#check_lights ray.src ray.dir#norm)
-          | Some isect -> (isect#color#scale (self#check_lights isect#pos isect#norm)))
+          | Some isect -> (isect#color#scale (min 1.0 (ambient +. (self#check_lights isect#pos isect#norm)))))
         | (ray :: (tail : ray_t list)) -> (
             match ray.isect with
-            | Some isect -> (isect#color#mix (make_color tail) (1.0 -. isect#reflectivity))
+            | Some isect -> (
+                let own_color = make_color tail isect#reflectivity in
+                let clr_black = new color 0.0 0.0 0.0 in
+                let reflect_color =
+                    if prev_refl > 0.01 then
+                        isect#color#scale (self#check_lights isect#pos isect#norm)
+                    else 
+                       clr_black
+                in
+                own_color#mix reflect_color 0.5)
             | None -> raise (invalid_arg "Got None for intersection before last ray") 
           )
         | _ -> raise (invalid_arg "make_color: Empty list of rays provided.")
       in
-      make_color rays
+      make_color rays 1.0
     method check_lights src normvector =
       let rec check_rec rem_lights brightness =
         match rem_lights with
-        | [] -> min 1.0 (brightness +. ambient)
+        | [] -> min 1.0 brightness
         | ((l : light) :: rest) -> (
-            let dir = (l#pos#difference src)#norm in
+            let dir = (src#difference l#pos)#norm in
             (*let dir = (src#difference l#pos)#norm in*)
             let light_dist = (l#pos#difference src)#magnitude in
             let rec check_shapes = function
               | [] -> (                
-                let scale_factor = max ((dir#dot normvector#inverse)) 0.0 in
+                let scale_factor = max (-.(dir#dot normvector)) 0.0 in
                 check_rec rest (brightness +. (l#brightness *. scale_factor)))
               | ((s : shape) :: shape_rest) -> (
-                match s#intersect src dir with
+                match s#intersect src dir#inverse with
                 | None -> check_shapes shape_rest
                 | Some isect when light_dist < isect#distance -> (check_shapes shape_rest)
                 | Some isect -> (check_rec rest brightness))
@@ -328,7 +337,8 @@ class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : 
               match shapes_list with
               | [] -> best_isect
               | s :: rest -> (
-                match s#intersect ray.src ray.dir with
+                let rdir = ray.dir in (*if n == nbounces then ray.dir else ray.dir in*)
+                match s#intersect ray.src rdir with
                 | None -> examine_shapes rest best_isect
                 | Some isect -> (
                   match best_isect with
@@ -338,9 +348,11 @@ class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : 
             in
             let isect = examine_shapes shapes None in
             match isect with
-            | None -> bgclr
+            | None -> new color 1.0 0.0 0.0 (*bgclr*)
             | Some (i : intersection) -> (
-              let next_ray = {src = i#pos; dir = i#norm; x = ray.x; y = ray.y; isect = isect} in
+              let norm_component = i#norm#scale (i#norm#dot ray.dir) in
+              let next_dir = (ray.dir#difference (norm_component))#inverse#sum norm_component in
+              let next_ray = {src = i#pos; dir = next_dir#norm; x = ray.x; y = ray.y; isect = isect} in
               helper next_ray (n - 1) (next_ray :: previous_rays)))
       in
       helper source_ray nbounces []
@@ -360,15 +372,16 @@ class scene (cam : camera) (shapes : shape list) (lights : light list) (bgclr : 
 let light_2 = new light (new vector3 0.0 2.0 3.0) 0.99;;
 let clr_green = new color 0.0 1.0 0.5;;
 let clr_purple = new color 1.0 0.0 1.0;;
+let plane_refl = 1.0;;
 let small_sphere = new sphere (new vector3 1.0 0.5 (-. 3.5)) clr_purple 1.0 0.15;;
-let bottom_plane = new plane (new vector3 0.0 (-. 4.0) 0.0) clr_green 0.5 (new vector3 0.0 (-. 1.0) 0.0);;
-let left_plane = new plane (new vector3 0.0 0.0 (-. 6.0)) clr_green 0.5 (new vector3 0.0 0.0 (-. 1.0));;
-let right_plane = new plane (new vector3 0.0 0.0 6.0) clr_green 0.5 (new vector3 0.0 0.0 1.0);;
-let top_plane = new plane (new vector3 0.0 4.0 0.0) clr_green 0.5 (new vector3 0.0 1.0 0.0);;
+let bottom_plane = new plane (new vector3 0.0 (-. 4.0) 0.0) clr_green plane_refl (new vector3 0.0 1.0 0.0);;
+let left_plane = new plane (new vector3 0.0 0.0 (-. 6.0)) clr_green plane_refl (new vector3 0.0 0.0 1.0);;
+let right_plane = new plane (new vector3 0.0 0.0 6.0) clr_green plane_refl (new vector3 0.0 0.0 (-.1.0));;
+let top_plane = new plane (new vector3 0.0 4.0 0.0) clr_green plane_refl (new vector3 0.0 (-.1.0) 0.0);;
 
 let test_scene = new scene test_cam [top_plane; test_sphere; small_sphere; bottom_plane; left_plane; right_plane]
-    [test_light] (new color 0.0 1.0 0.0) 1 0.25;;
-test_scene#render_to_bmp 1024 640 "raytracer2_test.bmp";;
+    [test_light] (new color 0.0 1.0 0.0) 2 0.25;;
+test_scene#render_to_bmp 128 96 "raytracer2_test.bmp";;
   
 (*
 vector_tests test_v3_a test_v3_b;;
